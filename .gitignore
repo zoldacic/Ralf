@@ -1,0 +1,8 @@
+.env
+node_modules/
+.venv/
+tmp/
+logs/
+models/
+bin/piper/
+*.log
