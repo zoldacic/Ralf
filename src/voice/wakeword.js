@@ -9,7 +9,7 @@ const log = require('../util/logger');
 
 // openWakeWord runs 16 kHz mono int16 audio in 80 ms (1280-sample) frames.
 const FRAME_LENGTH = 1280;
-const READY_TIMEOUT_MS = 20000;
+const READY_TIMEOUT_MS = 60000;
 
 const OP_OPEN = 1;
 const OP_AUDIO = 2;

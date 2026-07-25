@@ -19,7 +19,7 @@ const config = require('./config');
 const log = require('./util/logger');
 const wakeword = require('./voice/wakeword');
 const { VoiceListener } = require('./voice/receiver');
-const { transcribe, stripWakeWord } = require('./pipeline/transcribe');
+const { transcribe, stripWakeWord, _client: whisper } = require('./pipeline/transcribe');
 const { ask } = require('./pipeline/ask');
 const { speak } = require('./pipeline/speak');
 
@@ -227,6 +227,8 @@ client.once('clientReady', async (c) => {
   await wakeword.init();
   if (!wakeword.available) {
     log.warn('Running without wake word — /ralf is the only trigger.');
+  } else {
+    whisper.warm(); // pre-load the STT model so the first spoken question isn't slow
   }
 });
 
@@ -234,6 +236,7 @@ function shutdown() {
   log.info('Shutting down...');
   for (const guildId of [...sessions.keys()]) leaveChannel(guildId);
   wakeword.releaseAll();
+  whisper.shutdown();
   client.destroy();
   process.exit(0);
 }

@@ -31,12 +31,24 @@ module.exports = {
   },
 
   stt: {
-    apiKey: () => required('OPENAI_API_KEY'),
-    // gpt-4o-mini-transcribe is the cheap one; gpt-4o-transcribe is more accurate.
-    model: process.env.STT_MODEL || 'gpt-4o-mini-transcribe',
+    // Local Whisper via a faster-whisper sidecar — no account, offline.
+    // (Replaced OpenAI hosted transcription.) See src/pipeline/whisper_sidecar.py.
+    python: abs(process.env.WHISPER_PYTHON || '.venv/Scripts/python.exe'),
+    sidecar: abs('src/pipeline/whisper_sidecar.py'),
+    // tiny | base | small | medium | large-v3. 'small' balances accuracy and
+    // speed on CPU; bump to 'medium' for better proper-noun accuracy if you can
+    // spare the latency.
+    model: process.env.WHISPER_MODEL || 'small',
     language: 'en',
-    // Biases the transcript toward D&D vocabulary and the bot's name.
-    prompt: 'Ralf. Dungeons and Dragons rules: Advantage, Opportunity Attack, Weapon Mastery, Saving Throw, Concentration.',
+    beamSize: Number(process.env.WHISPER_BEAM || 5),
+    // Biases the transcript toward D&D vocabulary — classes, spells, and terms
+    // Whisper otherwise mangles at 16 kHz.
+    prompt:
+      'Dungeons and Dragons fifth edition rules. Classes: wizard, warlock, sorcerer, ' +
+      'cleric, paladin, rogue, fighter, barbarian, bard, druid, monk, ranger. ' +
+      'Spells: Fireball, Eldritch Blast, Bardic Inspiration, Cure Wounds, Counterspell. ' +
+      'Terms: Advantage, Disadvantage, Opportunity Attack, Weapon Mastery, Saving Throw, ' +
+      'Concentration, Grapple, Proficiency Bonus, Armor Class.',
   },
 
   wakeword: {
@@ -57,8 +69,8 @@ module.exports = {
   capture: {
     // Stop capturing after this much continuous silence.
     silenceMs: 1500,
-    // Hard cap so nobody can leave the mic open.
-    maxMs: 20000,
+    // Hard cap so nobody can leave the mic open (also bounds STT latency on CPU).
+    maxMs: 12000,
     // Discard captures shorter than this — almost always a false trigger.
     minMs: 700,
     // Phase 2 debug: capture speech to a WAV on any voice activity (no wake

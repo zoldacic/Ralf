@@ -12,6 +12,10 @@ const { Downsampler, toFrames, pcmToWav } = require('./resample');
 const IDLE = 'idle';
 const CAPTURING = 'capturing';
 
+// Keep this much recent audio so the onset of a question spoken right as the
+// wake word fires isn't clipped. 16 kHz mono 16-bit => 32000 bytes/sec.
+const PREROLL_BYTES = Math.round((16000 * 2 * 600) / 1000); // ~600 ms
+
 /**
  * Subscribes to every speaker in a voice connection, runs wake word detection
  * locally, and emits a WAV buffer once a post-wake utterance completes.
@@ -54,6 +58,7 @@ class VoiceListener extends EventEmitter {
         pending: Buffer.alloc(0), // frames not yet fed to Porcupine
         captured: [], // PCM chunks since the wake word
         capturedBytes: 0,
+        preroll: Buffer.alloc(0), // rolling recent audio, prepended on capture
         silenceTimer: null,
         maxTimer: null,
         cooldownUntil: 0,
@@ -129,6 +134,13 @@ class VoiceListener extends EventEmitter {
     s.pending = remainder;
 
     for (const frame of frames) wakeword.feed(s.userId, frame);
+
+    // Roll a short pre-roll window so _beginCapture can prepend the audio just
+    // before detection — otherwise the first word of the question is clipped.
+    s.preroll = s.preroll.length ? Buffer.concat([s.preroll, pcm]) : pcm;
+    if (s.preroll.length > PREROLL_BYTES) {
+      s.preroll = s.preroll.subarray(s.preroll.length - PREROLL_BYTES);
+    }
   }
 
   _beginCapture(s) {
@@ -140,6 +152,12 @@ class VoiceListener extends EventEmitter {
     s.state = CAPTURING;
     s.captured = [];
     s.capturedBytes = 0;
+    // Prepend the pre-roll so the onset of speech isn't clipped.
+    if (s.preroll.length) {
+      s.captured.push(s.preroll);
+      s.capturedBytes += s.preroll.length;
+    }
+    s.preroll = Buffer.alloc(0);
     s.pending = Buffer.alloc(0);
     this.emit('wake', { userId: s.userId });
 
