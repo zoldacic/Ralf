@@ -134,6 +134,7 @@ class WakeWord extends EventEmitter {
         break;
       case 'detect': {
         const userId = this._userForStream(msg.stream);
+        log.debug(`[oww] detect model=${msg.model} score=${msg.score} stream=${msg.stream}`);
         if (userId) this.emit('detection', { userId, model: msg.model, score: msg.score });
         break;
       }

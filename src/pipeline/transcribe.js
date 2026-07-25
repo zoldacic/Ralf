@@ -45,8 +45,10 @@ async function transcribe(wav) {
  * name inconsistently, so match loosely.
  */
 function stripWakeWord(text) {
+  // The wake phrase is "hey ralf" (openWakeWord). Strip an optional leading
+  // "hey" and the name — Whisper still renders the name loosely, so match wide.
   return text
-    .replace(/^\s*(ralf|ralph|rolf|ralv|rafe)\s*[,.!?:-]*\s*/i, '')
+    .replace(/^\s*(hey|hi|okay|ok)?\s*(ralff|ralph|ralf|rolf|ralv|rafe)\s*[,.!?:-]*\s*/i, '')
     .trim();
 }
 

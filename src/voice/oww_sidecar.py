@@ -36,6 +36,11 @@ REFRACTORY_SAMPLES = 16000 * 1  # ~1 s; Node applies a longer cooldown on top.
 
 OP_OPEN, OP_AUDIO, OP_CLOSE = 1, 2, 3
 
+# Diagnostic: with OWW_TRACE=1, log every chunk's best score above a floor to
+# stderr (shows up as [oww] debug lines) so thresholds can be tuned.
+TRACE = os.environ.get("OWW_TRACE") == "1"
+TRACE_FLOOR = float(os.environ.get("OWW_TRACE_FLOOR", "0.02"))
+
 
 def log(*a):
     print(*a, file=sys.stderr, flush=True)
@@ -141,6 +146,8 @@ def main():
                 continue
             pcm = np.frombuffer(payload[3:], dtype="<i2")
             for name, score in det.feed(pcm):
+                if TRACE and score >= TRACE_FLOOR:
+                    log(f"trace stream={sid} {name} score={score:.3f}")
                 if score >= args.threshold:
                     det.refractory = REFRACTORY_SAMPLES
                     emit({"type": "detect", "stream": sid,

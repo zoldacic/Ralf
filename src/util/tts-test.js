@@ -13,6 +13,11 @@
 
 const fs = require('fs');
 const path = require('path');
+
+// Allow `node tts-test.js <voice.onnx>` to pick the voice. This must happen
+// before ../config is required, because config resolves PIPER_VOICE eagerly.
+if (process.argv[2]) process.env.PIPER_VOICE = process.argv[2];
+
 const config = require('../config');
 const { synthesize } = require('../pipeline/speak');
 
@@ -27,9 +32,6 @@ const SAMPLES = [
 ];
 
 async function main() {
-  const override = process.argv[2];
-  if (override) process.env.PIPER_VOICE = override;
-
   fs.mkdirSync(OUT, { recursive: true });
   const label = path.basename(config.piper.voice, '.onnx');
   console.log(`Voice: ${label}\nWriting to ${OUT}\n`);
