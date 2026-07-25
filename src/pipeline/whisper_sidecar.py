@@ -107,12 +107,11 @@ def main():
                 vad_filter=True,  # drop silence — faster and cleaner
                 vad_parameters={"min_silence_duration_ms": 500},
             )
-            # Drop low-confidence / silence segments so noise doesn't come back
-            # as a Whisper hallucination ("thanks for watching", etc.).
-            kept = [
-                seg.text for seg in segments
-                if seg.no_speech_prob < 0.6 and seg.avg_logprob > -1.0
-            ]
+            # Drop only clearly-silent segments (no_speech_prob is the real
+            # silence signal; VAD already trims most silence). Do NOT filter on
+            # avg_logprob — real but harder-to-transcribe speech sits around
+            # -1.5, so an avg_logprob cutoff silently eats legitimate answers.
+            kept = [seg.text for seg in segments if seg.no_speech_prob < 0.6]
             text = " ".join(kept).strip()
             emit({"type": "result", "id": req_id, "text": text})
         except Exception as e:  # noqa: BLE001
