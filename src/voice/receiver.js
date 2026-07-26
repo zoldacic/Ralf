@@ -94,10 +94,20 @@ class VoiceListener extends EventEmitter {
     if (wakeword.available && !this.captureTest) wakeword.openStream(userId);
 
     pipeline.on('data', (pcm) => this._onPcm(s, pcm));
-    pipeline.on('error', (err) => {
-      log.error(`Stream error for ${userId}: ${err.message}`);
+
+    // Errors do NOT propagate through .pipe(), so every stream in the chain
+    // needs its own handler. Without one on `opus`, a receive-side failure
+    // (e.g. a DAVE decrypt error on a stray packet) is an unhandled 'error'
+    // event and kills the process. Drop this speaker's stream instead; it is
+    // re-subscribed the next time they talk.
+    const onStreamError = (where) => (err) => {
+      log.error(`Stream error for ${userId} (${where}): ${err.message}`);
       this._teardown(userId);
-    });
+    };
+    opus.on('error', onStreamError('receive'));
+    decoder.on('error', onStreamError('decode'));
+    down.on('error', onStreamError('resample'));
+
     opus.on('end', () => this._teardown(userId));
 
     log.debug(`Listening to ${userId}`);

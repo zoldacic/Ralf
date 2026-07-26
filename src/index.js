@@ -91,6 +91,11 @@ async function joinChannel(interaction) {
     guildId: interaction.guildId,
     adapterCreator: interaction.guild.voiceAdapterCreator,
     selfDeaf: false, // must be false to receive audio
+    // Ralf has to decode everyone's audio to hear the wake word, so end-to-end
+    // encryption buys nothing here and its session churn threw undecryptable
+    // packets ("UnencryptedWhenPassthroughDisabled"). Transport encryption is
+    // still applied; only the DAVE E2EE layer is off.
+    daveEncryption: false,
   });
 
   try {
