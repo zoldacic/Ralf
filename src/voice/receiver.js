@@ -16,14 +16,17 @@ const CAPTURING = 'capturing';
 // wake word fires isn't clipped. 16 kHz mono 16-bit => 32000 bytes/sec.
 const PREROLL_BYTES = Math.round((16000 * 2 * 600) / 1000); // ~600 ms
 
+const BYTES_PER_SEC = 16000 * 2;
+
 /**
  * Subscribes to every speaker in a voice connection, runs wake word detection
  * locally, and emits a WAV buffer once a post-wake utterance completes.
  *
- * Emits: 'utterance' ({ userId, wav, durationMs })
+ * Emits: 'utterance' ({ userId, wav, durationMs })   — post-wake-word question
+ *         'speech'    ({ userId, wav, durationMs, startedAt }) — every segment
  */
 class VoiceListener extends EventEmitter {
-  constructor(connection, { captureTest = false } = {}) {
+  constructor(connection, { captureTest = false, record = false } = {}) {
     super();
     this.connection = connection;
     this.sessions = new Map(); // userId -> session
@@ -31,6 +34,9 @@ class VoiceListener extends EventEmitter {
     // Phase 2 debug: capture on any voice activity instead of waiting for the
     // wake word, and save the WAV rather than transcribing it.
     this.captureTest = captureTest;
+    // Session recording: emit every speech segment, wake word or not, so the
+    // whole table can be transcribed and summarized after the game.
+    this.record = record;
 
     this.receiver = connection.receiver;
     this._onSpeakingStart = (userId) => this._subscribe(userId);
@@ -59,6 +65,7 @@ class VoiceListener extends EventEmitter {
         captured: [], // PCM chunks since the wake word
         capturedBytes: 0,
         preroll: Buffer.alloc(0), // rolling recent audio, prepended on capture
+        rec: null, // in-flight session-recording segment, independent of state
         silenceTimer: null,
         maxTimer: null,
         cooldownUntil: 0,
@@ -116,6 +123,10 @@ class VoiceListener extends EventEmitter {
   _onPcm(s, pcm) {
     if (this.stopped) return;
 
+    // Session recording runs on its own clock: everything said is kept, whether
+    // or not it followed a wake word, and regardless of capture state/cooldown.
+    this._record(s, pcm);
+
     if (s.state === CAPTURING) {
       s.captured.push(pcm);
       s.capturedBytes += pcm.length;
@@ -151,6 +162,46 @@ class VoiceListener extends EventEmitter {
     if (s.preroll.length > PREROLL_BYTES) {
       s.preroll = s.preroll.subarray(s.preroll.length - PREROLL_BYTES);
     }
+  }
+
+  /**
+   * Accumulate a speech segment for the session recording. Discord only sends
+   * packets while someone is actually talking, so this is naturally gated: a
+   * segment ends on silence, or gets cut at maxSegmentMs to bound memory.
+   */
+  _record(s, pcm) {
+    if (!this.record) return;
+
+    if (!s.rec) s.rec = { chunks: [], bytes: 0, startedAt: Date.now(), timer: null };
+    const r = s.rec;
+    r.chunks.push(pcm);
+    r.bytes += pcm.length;
+
+    if (r.timer) clearTimeout(r.timer);
+    if (r.bytes >= (config.session.maxSegmentMs / 1000) * BYTES_PER_SEC) {
+      this._flushRecording(s, 'max-length');
+      return;
+    }
+    r.timer = setTimeout(() => this._flushRecording(s, 'silence'), config.capture.silenceMs);
+  }
+
+  _flushRecording(s, reason) {
+    const r = s.rec;
+    if (!r) return;
+    if (r.timer) clearTimeout(r.timer);
+    s.rec = null;
+
+    const pcm = Buffer.concat(r.chunks);
+    const durationMs = Math.round((pcm.length / BYTES_PER_SEC) * 1000);
+    if (durationMs < config.capture.minMs) return; // a blip, not speech
+
+    this.emit('speech', {
+      userId: s.userId,
+      wav: pcmToWav(pcm, config.audio.targetRate),
+      durationMs,
+      startedAt: r.startedAt,
+      reason,
+    });
   }
 
   _beginCapture(s) {
@@ -214,6 +265,7 @@ class VoiceListener extends EventEmitter {
   _teardown(userId) {
     const s = this.sessions.get(userId);
     if (!s) return;
+    this._flushRecording(s, 'teardown'); // don't lose the tail of the session
     if (s.silenceTimer) clearTimeout(s.silenceTimer);
     if (s.maxTimer) clearTimeout(s.maxTimer);
     if (s.stream) {

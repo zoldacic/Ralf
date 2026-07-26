@@ -13,6 +13,10 @@ const commands = [
     .setDescription('Have Ralf leave the voice channel'),
 
   new SlashCommandBuilder()
+    .setName('ralf-summary')
+    .setDescription('Transcribe the last recorded session and post a recap'),
+
+  new SlashCommandBuilder()
     .setName('ralf')
     .setDescription('Ask Ralf a rules question (D&D 5e 2024)')
     .addStringOption((opt) =>

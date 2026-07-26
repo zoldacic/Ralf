@@ -78,6 +78,46 @@ module.exports = {
     testMode: process.env.CAPTURE_TEST_MODE === 'true',
   },
 
+  session: {
+    // Record every speech segment to disk during a game so the session can be
+    // summarized afterwards. Writing WAVs is cheap; transcription deliberately
+    // happens later in batch (/ralf-summary) because medium.en runs ~3x slower
+    // than realtime on this CPU — transcribing live would fall behind and
+    // starve the wake-word path.
+    record: process.env.SESSION_RECORD !== 'false',
+    dir: abs(process.env.SESSION_DIR || 'recordings'),
+    // Cut a segment after this long so memory stays bounded on a monologue.
+    maxSegmentMs: 30000,
+    prompt: abs('src/data/summary-prompt.txt'),
+    maxTokens: 2000,
+    // The table talks Swedish; only questions aimed at Ralf are English. So the
+    // bulk transcription MUST use a multilingual model — the ".en" models used
+    // on the live path cannot transcribe Swedish at all. Runs in its own
+    // sidecar, so the live wake-word path keeps its warm English model.
+    // 'small' is ~3x faster than 'medium' if a long session is too slow.
+    model: process.env.SUMMARY_WHISPER_MODEL || 'medium',
+    language: process.env.SUMMARY_LANGUAGE || 'sv',
+    // Skip segments quieter than this RMS instead of transcribing them. On real
+    // data, silence peaked at 944 RMS and the quietest real speech was 957, so
+    // 500 leaves a wide margin. Silent clips were ~75% of a test session, and
+    // transcription is the slow part. The WAVs are kept, so lowering this and
+    // re-running recovers anything wrongly skipped.
+    minRms: Number(process.env.SUMMARY_MIN_RMS || 500),
+    // Whisper pads each call to a 30 s window, so short clips cost nearly what
+    // long ones do. Batch one speaker's clips up to this much audio per call.
+    batchMs: Number(process.env.SUMMARY_BATCH_MS || 25000),
+    // ...but never span more than this much wall-clock time, so the recap keeps
+    // the order the conversation actually happened in. Five minutes is plenty
+    // of resolution for a recap; tightening it costs speed, widening it blurs
+    // the chronology.
+    batchSpanMs: Number(process.env.SUMMARY_BATCH_SPAN_MS || 300000),
+    // Rules terms stay English at Swedish tables, so bias toward both.
+    sttPrompt:
+      'Ett samtal på svenska under en Dungeons and Dragons-session. ' +
+      'Regeltermer sägs ofta på engelska: advantage, disadvantage, saving throw, ' +
+      'initiative, opportunity attack, weapon mastery, concentration, armor class.',
+  },
+
   audio: {
     discordRate: 48000,
     discordChannels: 2,

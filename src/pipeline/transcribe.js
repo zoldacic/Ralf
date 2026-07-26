@@ -19,7 +19,16 @@ const READY_TIMEOUT_MS = 300000;
  * rejects and the caller logs it (the wake-word path just drops that utterance).
  */
 class WhisperClient {
-  constructor() {
+  /**
+   * @param {{model?: string, language?: string, prompt?: string}} [opts]
+   *   Overrides for config.stt, letting a batch job (session summaries) run a
+   *   different model and language from the live path — the table speaks
+   *   Swedish, but questions to Ralf are English.
+   */
+  constructor({ model, language, prompt } = {}) {
+    this.modelOverride = model || null;
+    this.languageOverride = language || null;
+    this.promptOverride = prompt !== undefined ? prompt : null;
     this.proc = null;
     this.ready = null; // Promise<void> once spawning
     this._stdoutBuf = '';
@@ -35,13 +44,14 @@ class WhisperClient {
       if (!fs.existsSync(python)) return reject(new Error(`Python not found at ${python}`));
       if (!fs.existsSync(sidecar)) return reject(new Error(`Whisper sidecar not found at ${sidecar}`));
 
+      const usePrompt = this.promptOverride !== null ? this.promptOverride : prompt;
       const args = [
         sidecar,
-        '--model', model,
-        '--language', language,
+        '--model', this.modelOverride || model,
+        '--language', this.languageOverride || language,
         '--beam-size', String(beamSize),
       ];
-      if (prompt) args.push('--initial-prompt', prompt);
+      if (usePrompt) args.push('--initial-prompt', usePrompt);
 
       let proc;
       try {
@@ -182,4 +192,4 @@ function stripWakeWord(text) {
     .trim();
 }
 
-module.exports = { transcribe, stripWakeWord, _client: client };
+module.exports = { transcribe, stripWakeWord, _client: client, WhisperClient };

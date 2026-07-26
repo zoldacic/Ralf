@@ -22,6 +22,13 @@ const { VoiceListener } = require('./voice/receiver');
 const { transcribe, stripWakeWord, _client: whisper } = require('./pipeline/transcribe');
 const { ask } = require('./pipeline/ask');
 const { speak, prepareAck, playAck } = require('./pipeline/speak');
+const {
+  startSession,
+  latestSession,
+  saveSegment,
+  readManifest,
+  summarizeSession,
+} = require('./pipeline/summarize');
 
 const client = new Client({
   intents: [
@@ -91,16 +98,20 @@ async function joinChannel(interaction) {
     guildId: interaction.guildId,
     adapterCreator: interaction.guild.voiceAdapterCreator,
     selfDeaf: false, // must be false to receive audio
-    // Ralf has to decode everyone's audio to hear the wake word, so end-to-end
-    // encryption buys nothing here and its session churn threw undecryptable
-    // packets ("UnencryptedWhenPassthroughDisabled"). Transport encryption is
-    // still applied; only the DAVE E2EE layer is off.
-    daveEncryption: false,
+    // NOTE: daveEncryption defaults to true and must stay that way — turning
+    // DAVE off stopped the voice handshake reaching Ready at all. The decrypt
+    // errors it can throw are handled per-stream in receiver.js instead.
   });
 
   try {
     await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
   } catch (err) {
+    // The stuck state says where the handshake stalled (Signalling = no voice
+    // server answer, Connecting = UDP/encryption trouble).
+    log.error(
+      `Voice connect failed for ${channel.name} ` +
+        `(state=${connection.state?.status}): ${err.message}`
+    );
     connection.destroy();
     return interaction.editReply('Could not connect to the voice channel.');
   }
@@ -110,10 +121,32 @@ async function joinChannel(interaction) {
   });
   connection.subscribe(player);
 
+  const recordDir = config.session.record ? startSession(interaction.guildId) : null;
+
   const listener = new VoiceListener(connection, {
     captureTest: config.capture.testMode,
+    record: Boolean(recordDir),
   });
   const textChannel = interaction.channel;
+
+  // Every speech segment goes to disk, wake word or not. Deliberately just a
+  // file write — transcription happens later via /ralf-summary.
+  if (recordDir) {
+    listener.on('speech', ({ userId, wav, durationMs, startedAt }) => {
+      try {
+        const member = channel.guild.members.cache.get(userId);
+        saveSegment(recordDir, {
+          userId,
+          speaker: member?.displayName || member?.user?.username || userId,
+          wav,
+          durationMs,
+          startedAt,
+        });
+      } catch (err) {
+        log.error(`Failed to save segment: ${err.message}`);
+      }
+    });
+  }
   listener.on('utterance', async ({ userId, wav, durationMs }) => {
     // Phase 2 debug path: save the clip so you can play it back, don't transcribe.
     if (config.capture.testMode) {
@@ -188,7 +221,11 @@ async function joinChannel(interaction) {
     : wakeword.available
       ? 'Say "Ralf" followed by your question, or use /ralf.'
       : 'Wake word is not active — use /ralf to ask questions.';
-  await interaction.editReply(`Ralf joined ${channel.name}. ${mode}`);
+  // Say so out loud: everyone in the channel is being recorded.
+  const rec = recordDir
+    ? '\n🔴 Recording this session for an end-of-game summary — everything said in this channel is saved to disk. Use `/ralf-summary` when you finish.'
+    : '';
+  await interaction.editReply(`Ralf joined ${channel.name}. ${mode}${rec}`);
 }
 
 function leaveChannel(guildId) {
@@ -205,6 +242,70 @@ function leaveChannel(guildId) {
   return true;
 }
 
+// ---------------------------------------------------------------- summary
+
+/** Split for Discord's 2000-character message limit, preferring line breaks. */
+function chunkMessage(text, limit = 1900) {
+  const chunks = [];
+  let rest = text;
+  while (rest.length > limit) {
+    let cut = rest.lastIndexOf('\n', limit);
+    if (cut < limit * 0.5) cut = limit; // no sensible break — hard split
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^\n+/, '');
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
+}
+
+/**
+ * Transcribe the recorded session and post a recap.
+ *
+ * Runs long — transcription is roughly 3x the spoken length on CPU — so it
+ * replies immediately and posts results to the channel instead of holding the
+ * interaction open past its 15 minute token.
+ */
+async function summarizeCommand(interaction) {
+  const dir = latestSession(interaction.guildId);
+  if (!dir) {
+    return await interaction.reply('No recorded session found for this server yet.');
+  }
+
+  const segments = readManifest(dir);
+  if (!segments.length) {
+    return await interaction.reply('That session has no recorded speech to summarize.');
+  }
+
+  const spokenMs = segments.reduce((t, s) => t + (s.durationMs || 0), 0);
+  const estMin = Math.max(1, Math.round((spokenMs * 3) / 60000));
+  await interaction.reply(
+    `Transcribing ${segments.length} clips (about ${Math.round(spokenMs / 60000)} min of speech). ` +
+      `This runs locally and takes roughly ${estMin} min — I'll post the recap here when it's done.`
+  );
+
+  const channel = interaction.channel;
+  try {
+    let lastNote = Date.now();
+    const { summary, spoken } = await summarizeSession(dir, (done, total) => {
+      // Occasional progress so a long run doesn't look hung.
+      if (Date.now() - lastNote > 120000) {
+        lastNote = Date.now();
+        channel?.send(`Still transcribing… ${done}/${total} clips.`).catch(() => {});
+      }
+    });
+
+    if (!summary) {
+      return void channel?.send('Nothing intelligible was transcribed from that session.');
+    }
+    for (const part of chunkMessage(`**Session recap** (${spoken} clips)\n\n${summary}`)) {
+      await channel?.send(part).catch(() => {});
+    }
+  } catch (err) {
+    log.error(`Summary failed: ${err.message}`);
+    await channel?.send(`Could not build the summary: ${err.message}`).catch(() => {});
+  }
+}
+
 // ---------------------------------------------------------------- commands
 
 client.on('interactionCreate', async (interaction) => {
@@ -214,6 +315,9 @@ client.on('interactionCreate', async (interaction) => {
     switch (interaction.commandName) {
       case 'ralf-join':
         return await joinChannel(interaction);
+
+      case 'ralf-summary':
+        return await summarizeCommand(interaction);
 
       case 'ralf-leave': {
         const left = leaveChannel(interaction.guildId);
