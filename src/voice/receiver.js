@@ -220,6 +220,16 @@ class VoiceListener extends EventEmitter {
     log.debug(`Stopped listening to ${userId}`);
   }
 
+  /**
+   * Drop every per-user stream so they're re-subscribed the next time each
+   * speaker talks. Used after a voice reconnect: the old receiver streams are
+   * dead but never fire 'end', so without this the bot goes silently deaf.
+   */
+  refreshStreams() {
+    if (this.stopped) return;
+    for (const userId of [...this.sessions.keys()]) this._teardown(userId);
+  }
+
   stop() {
     this.stopped = true;
     this.receiver.speaking.off('start', this._onSpeakingStart);

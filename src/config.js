@@ -94,7 +94,7 @@ module.exports = {
     // captured — before STT/LLM run — so the user knows they were heard while
     // the ~13 s transcription happens. Pre-synthesized once at startup.
     // Set ACK_PHRASE='' to disable. Only used on the wake-word path.
-    phrase: process.env.ACK_PHRASE ?? 'Got ya.',
+    phrase: process.env.ACK_PHRASE ?? 'Right...',
   },
 
   paths: {

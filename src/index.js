@@ -155,6 +155,29 @@ async function joinChannel(interaction) {
     textChannel: interaction.channel,
   });
 
+  // Self-heal when Discord drops or migrates the voice connection. Without this
+  // the receiver goes silently deaf — the process stays up but stops hearing
+  // anyone ("stopped listening"). The initial Ready was already consumed above,
+  // so any Ready we see here is a genuine reconnect.
+  const guildId = interaction.guildId;
+  connection.on(VoiceConnectionStatus.Ready, () => {
+    log.info('Voice connection re-established — refreshing receiver streams.');
+    listener.refreshStreams();
+  });
+  connection.on(VoiceConnectionStatus.Disconnected, async () => {
+    log.warn('Voice connection dropped — attempting to recover.');
+    try {
+      await Promise.race([
+        entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+        entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+      ]);
+      // Reconnecting on its own; the Ready handler above refreshes streams.
+    } catch (err) {
+      log.warn(`Voice connection could not recover (${err.message}) — leaving channel.`);
+      leaveChannel(guildId);
+    }
+  });
+
   const mode = config.capture.testMode
     ? 'Capture-test mode: just talk and I will save a WAV of each utterance to tmp/.'
     : wakeword.available
