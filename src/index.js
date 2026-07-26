@@ -21,7 +21,7 @@ const wakeword = require('./voice/wakeword');
 const { VoiceListener } = require('./voice/receiver');
 const { transcribe, stripWakeWord, _client: whisper } = require('./pipeline/transcribe');
 const { ask } = require('./pipeline/ask');
-const { speak } = require('./pipeline/speak');
+const { speak, prepareAck, playAck } = require('./pipeline/speak');
 
 const client = new Client({
   intents: [
@@ -126,6 +126,10 @@ async function joinChannel(interaction) {
       return;
     }
 
+    // Instant ack: the user was heard. Plays while STT + Claude run (~13 s),
+    // so the channel isn't silent. Fire-and-forget; never blocks the pipeline.
+    playAck(player);
+
     try {
       const raw = await transcribe(wav);
       const question = stripWakeWord(raw);
@@ -185,7 +189,7 @@ client.on('interactionCreate', async (interaction) => {
 
       case 'ralf-leave': {
         const left = leaveChannel(interaction.guildId);
-        return interaction.reply(left ? 'Ralf left the channel.' : 'Ralf is not in a channel.');
+        return await interaction.reply(left ? 'Ralf left the channel.' : 'Ralf is not in a channel.');
       }
 
       case 'ralf': {
@@ -197,7 +201,7 @@ client.on('interactionCreate', async (interaction) => {
           // Answer in text even without a voice session.
           const answer = await ask(question);
           log.qa({ guildId: interaction.guildId, userId: interaction.user.id, source: 'slash', question, answer });
-          return interaction.editReply(`**Ralf:** ${answer}`);
+          return await interaction.editReply(`**Ralf:** ${answer}`);
         }
 
         await interaction.editReply(`*Asking Ralf: ${question}*`);
@@ -222,6 +226,11 @@ client.on('interactionCreate', async (interaction) => {
 
 // ---------------------------------------------------------------- lifecycle
 
+// Without an 'error' listener, any error the Client emits (e.g. a rejected
+// interaction reply captured by discord.js) is an unhandled 'error' event, and
+// Node throws — killing the whole bot. Log and keep running instead.
+client.on('error', (err) => log.error(`Discord client error: ${err.message}`));
+
 client.once('clientReady', async (c) => {
   log.info(`Logged in as ${c.user.tag}`);
   await wakeword.init();
@@ -229,6 +238,11 @@ client.once('clientReady', async (c) => {
     log.warn('Running without wake word — /ralf is the only trigger.');
   } else {
     whisper.warm(); // pre-load the STT model so the first spoken question isn't slow
+    // Pre-synthesize the instant-ack clip once, so the wake-word path can play
+    // it with zero Piper latency. Degrades to no ack if it fails.
+    prepareAck(config.ack.phrase)
+      .then((p) => log.info(p ? `Ack ready ("${config.ack.phrase}")` : 'Ack disabled'))
+      .catch((err) => log.warn(`Ack pre-synth failed, continuing without it: ${err.message}`));
   }
 });
 

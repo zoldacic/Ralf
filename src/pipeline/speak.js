@@ -20,22 +20,17 @@ function splitSentences(text) {
 }
 
 /**
- * Run one sentence through Piper, producing a WAV file.
+ * Run one sentence through Piper into a specific WAV path.
  *
  * Piper is spawned with cwd set to its own directory — it resolves espeak-ng
  * data relative to the working directory and fails confusingly otherwise.
  *
  * @param {string} sentence
+ * @param {string} out  destination WAV path
  * @returns {Promise<string>} path to the generated WAV
  */
-function synthesize(sentence) {
+function runPiper(sentence, out) {
   return new Promise((resolve, reject) => {
-    fs.mkdirSync(config.paths.tmp, { recursive: true });
-    const out = path.join(
-      config.paths.tmp,
-      `tts-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.wav`
-    );
-
     const proc = spawn(
       config.piper.bin,
       ['--model', config.piper.voice, '--output_file', out],
@@ -60,6 +55,65 @@ function synthesize(sentence) {
     proc.stdin.write(sentence);
     proc.stdin.end();
   });
+}
+
+/**
+ * Run one sentence through Piper, producing a WAV file with a unique name.
+ *
+ * @param {string} sentence
+ * @returns {Promise<string>} path to the generated WAV
+ */
+function synthesize(sentence) {
+  fs.mkdirSync(config.paths.tmp, { recursive: true });
+  const out = path.join(
+    config.paths.tmp,
+    `tts-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.wav`
+  );
+  return runPiper(sentence, out);
+}
+
+// Cached acknowledgement WAV, synthesized once at startup. Null when the ack
+// is disabled or pre-synthesis failed — the pipeline degrades to no ack.
+let ackWav = null;
+
+/**
+ * Pre-synthesize the instant-ack phrase once, so playing it later is just a
+ * file read (no Piper spawn on the hot path). Call at startup.
+ *
+ * @param {string} phrase  empty/falsy disables the ack
+ * @returns {Promise<string|null>} cached WAV path, or null if disabled
+ */
+async function prepareAck(phrase) {
+  if (!phrase || !phrase.trim()) {
+    ackWav = null;
+    return null;
+  }
+  fs.mkdirSync(config.paths.tmp, { recursive: true });
+  const out = path.join(config.paths.tmp, 'ack.wav');
+  await runPiper(phrase.trim(), out);
+  ackWav = out;
+  return out;
+}
+
+/**
+ * Play the pre-synthesized ack immediately (fire-and-forget). Returns false if
+ * no ack is prepared, so callers can proceed regardless.
+ *
+ * @param {import('@discordjs/voice').AudioPlayer} player
+ * @returns {boolean} whether an ack was queued
+ */
+function playAck(player) {
+  if (!ackWav) return false;
+  try {
+    const resource = createAudioResource(fs.createReadStream(ackWav), {
+      inputType: StreamType.Arbitrary,
+    });
+    player.play(resource);
+    return true;
+  } catch (err) {
+    log.error(`Ack playback failed: ${err.message}`);
+    return false;
+  }
 }
 
 /**
@@ -112,4 +166,4 @@ function playAndWait(player, file) {
   });
 }
 
-module.exports = { speak, synthesize, splitSentences };
+module.exports = { speak, synthesize, splitSentences, prepareAck, playAck };

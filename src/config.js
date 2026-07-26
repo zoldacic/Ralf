@@ -89,6 +89,14 @@ module.exports = {
     voice: abs(process.env.PIPER_VOICE || 'models/en_GB-alba-medium.onnx'),
   },
 
+  ack: {
+    // Short spoken acknowledgement played the instant a spoken question is
+    // captured — before STT/LLM run — so the user knows they were heard while
+    // the ~13 s transcription happens. Pre-synthesized once at startup.
+    // Set ACK_PHRASE='' to disable. Only used on the wake-word path.
+    phrase: process.env.ACK_PHRASE ?? 'Got ya.',
+  },
+
   paths: {
     tmp: abs('tmp'),
     logs: abs('logs'),
