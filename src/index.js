@@ -22,6 +22,7 @@ const { VoiceListener } = require('./voice/receiver');
 const { transcribe, stripWakeWord, _client: whisper } = require('./pipeline/transcribe');
 const { ask } = require('./pipeline/ask');
 const { speak, prepareAck, playAck } = require('./pipeline/speak');
+const character = require('./pipeline/character');
 const {
   startSession,
   latestSession,
@@ -53,7 +54,7 @@ async function handleQuestion({ guildId, question, source, userId }) {
 
   let answer;
   try {
-    answer = await ask(question);
+    answer = await ask(question, { persona: session?.persona });
   } catch (err) {
     log.error(`Claude failed: ${err.message}`);
     if (session?.textChannel) {
@@ -120,6 +121,12 @@ async function joinChannel(interaction) {
     behaviors: { noSubscriber: NoSubscriberBehavior.Pause },
   });
   connection.subscribe(player);
+
+  // Roll tonight's character before anything else needs it, so the intro line
+  // is already being written while the receiver is wired up.
+  const rolled = character.enabled() ? character.rollCharacter() : null;
+  const persona = rolled ? character.personaPrompt(rolled) : null;
+  const intro = rolled ? character.introduce(rolled) : Promise.resolve(null);
 
   const recordDir = config.session.record ? startSession(interaction.guildId) : null;
 
@@ -190,6 +197,8 @@ async function joinChannel(interaction) {
     connection,
     player,
     listener,
+    persona,
+    character: rolled,
     textChannel: interaction.channel,
   });
 
@@ -225,7 +234,19 @@ async function joinChannel(interaction) {
   const rec = recordDir
     ? '\n🔴 Recording this session for an end-of-game summary — everything said in this channel is saved to disk. Use `/ralf-summary` when you finish.'
     : '';
-  await interaction.editReply(`Ralf joined ${channel.name}. ${mode}${rec}`);
+  const who = rolled ? `\n🎲 Ralf rolled a **${character.describe(rolled)}** for tonight.` : '';
+  await interaction.editReply(`Ralf joined ${channel.name}. ${mode}${who}${rec}`);
+
+  // Say the roll out loud once the line is written. Deliberately not awaited —
+  // joining must not hang on an API call, and the text reply already named the
+  // character.
+  intro
+    .then((line) => {
+      if (!line) return;
+      textChannel?.send(`**Ralf:** ${line}`).catch(() => {});
+      return speak(player, line);
+    })
+    .catch((err) => log.warn(`Character intro could not be announced: ${err.message}`));
 }
 
 function leaveChannel(guildId) {

@@ -8,9 +8,19 @@ differ:
 - Weapon Mastery
 - Grapple and Unarmed Strike
 - Bardic Inspiration
+- Counterspell
 - species instead of race
 - Surprise and Exhaustion
 - the changes to how Concentration is broken
+
+Counterspell is the one most often answered from the old rules, so be exact: in
+2024 the creature whose spell you are countering makes a Constitution saving
+throw against your spell save DC, and on a failure the spell fails and the slot
+is still spent. There is no spellcasting ability check, and no automatic
+success against spells of level three or lower — that was 2014. The level of the
+spell being countered does not change the mechanic, and you do not need to match
+it with a slot of equal or higher level; it is the same Constitution save from a
+cantrip to a ninth level spell.
 
 FORMAT
 Answer in one or two sentences — never more than two, and keep it under about

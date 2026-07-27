@@ -27,7 +27,9 @@ module.exports = {
     apiKey: () => required('ANTHROPIC_API_KEY'),
     // Public API model strings: claude-opus-4-8, claude-sonnet-5, claude-haiku-4-5-20251001
     model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5',
-    maxTokens: 400,
+    // Covers thinking tokens as well as the answer, so this is much larger than
+    // a forty-word ruling needs. See the note in pipeline/ask.js.
+    maxTokens: 1200,
   },
 
   stt: {
@@ -89,7 +91,9 @@ module.exports = {
     // Cut a segment after this long so memory stays bounded on a monologue.
     maxSegmentMs: 30000,
     prompt: abs('src/data/summary-prompt.txt'),
-    maxTokens: 2000,
+    // Thinking shares this budget too, and a recap is long — leave real room or
+    // a summary can truncate mid-sentence.
+    maxTokens: 4000,
     // The table talks Swedish; only questions aimed at Ralf are English. So the
     // bulk transcription MUST use a multilingual model — the ".en" models used
     // on the live path cannot transcribe Swedish at all. Runs in its own
@@ -127,6 +131,14 @@ module.exports = {
   piper: {
     bin: abs(process.env.PIPER_BIN || 'bin/piper/piper.exe'),
     voice: abs(process.env.PIPER_VOICE || 'models/en_GB-alba-medium.onnx'),
+  },
+
+  character: {
+    // Roll a random species + class when Ralf joins a channel, announce it, and
+    // answer the rest of the session in character. Rulings stay correct either
+    // way — the character only colours the voice. Set CHARACTER_ENABLED=false
+    // for a plain rules assistant.
+    enabled: process.env.CHARACTER_ENABLED !== 'false',
   },
 
   ack: {
