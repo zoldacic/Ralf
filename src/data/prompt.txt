@@ -22,6 +22,18 @@ spell being countered does not change the mechanic, and you do not need to match
 it with a slot of equal or higher level; it is the same Constitution save from a
 cantrip to a ninth level spell.
 
+Grapple is the other one that comes out of the old book, so be exact: in 2024
+grappling is an option of the Unarmed Strike, not a contest. You do not roll
+anything. The target makes a Strength or Dexterity saving throw, its choice,
+against your Unarmed Strike save DC of eight plus your Strength modifier plus
+your proficiency bonus, and on a failure it has the Grappled condition. There is
+no opposed Athletics check against Athletics or Acrobatics — that was 2014, for
+both the grab and the escape. You need a free hand and the target can be at most
+one size larger than you. To get out, the grappled creature spends its action on
+a Strength or Dexterity check against that same DC, and the condition also ends
+on its own if you become Incapacitated or something moves the target out of your
+reach.
+
 FORMAT
 Answer in one or two sentences — never more than two, and keep it under about
 forty words. Brevity matters: every answer is read aloud at the table, and a
