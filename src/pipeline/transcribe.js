@@ -20,15 +20,16 @@ const READY_TIMEOUT_MS = 300000;
  */
 class WhisperClient {
   /**
-   * @param {{model?: string, language?: string, prompt?: string}} [opts]
-   *   Overrides for config.stt, letting a batch job (session summaries) run a
-   *   different model and language from the live path — the table speaks
-   *   Swedish, but questions to Ralf are English.
+   * @param {{model?: string, language?: string, prompt?: string, beamSize?: number}} [opts]
+   *   Overrides for config.stt, letting other jobs run a different model from
+   *   the live path — session summaries need a multilingual model because the
+   *   table speaks Swedish, and the wake-word gate needs a tiny fast one.
    */
-  constructor({ model, language, prompt } = {}) {
+  constructor({ model, language, prompt, beamSize } = {}) {
     this.modelOverride = model || null;
     this.languageOverride = language || null;
     this.promptOverride = prompt !== undefined ? prompt : null;
+    this.beamOverride = beamSize || null;
     this.proc = null;
     this.ready = null; // Promise<void> once spawning
     this._stdoutBuf = '';
@@ -49,7 +50,7 @@ class WhisperClient {
         sidecar,
         '--model', this.modelOverride || model,
         '--language', this.languageOverride || language,
-        '--beam-size', String(beamSize),
+        '--beam-size', String(this.beamOverride || beamSize),
       ];
       if (usePrompt) args.push('--initial-prompt', usePrompt);
 
@@ -183,13 +184,22 @@ async function transcribe(wav) {
 }
 
 /**
- * Strip a leading wake word from the transcript. The wake phrase is "hey ralf"
- * (openWakeWord). Whisper still renders the name loosely, so match wide.
+ * Strip the leading wake word from a transcript, leaving the question.
+ *
+ * Whisper has never heard the name and reaches for the nearest English word,
+ * so match wide — Ralph, Rolf, Rafe all mean Ralf here. Keep this in step with
+ * NAME in src/voice/wakegate.js, which decides whether a segment is a question
+ * at all; anything that can open the gate has to be strippable afterwards.
  */
 function stripWakeWord(text) {
-  return text
-    .replace(/^\s*(hey|hi|okay|ok)?\s*(ralff|ralph|ralf|rolf|ralv|rafe)\s*[,.!?:-]*\s*/i, '')
-    .trim();
+  // Punctuation floats freely in a transcript — "Hey, Ralph, what…" is as
+  // likely as "Hey Ralph what…" — so allow it between every token rather than
+  // listing the marks that turned up in one test.
+  const SEP = '[^\\p{L}\\p{N}]*';
+  const GREETING = '(?:hey there|hey|hi|yo|okay|ok|hej|hall[åa])';
+  const NAME = '(?:ralff?|ralph|rolf|rolph|ralv|rafe|alf)';
+  const re = new RegExp(`^${SEP}(?:${GREETING}\\b${SEP})?${NAME}\\b${SEP}`, 'iu');
+  return text.replace(re, '').trim();
 }
 
 module.exports = { transcribe, stripWakeWord, _client: client, WhisperClient };

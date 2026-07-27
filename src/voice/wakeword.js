@@ -56,7 +56,12 @@ class WakeWord extends EventEmitter {
     return new Promise((resolve) => {
       this._resolveInit = resolve;
 
-      if (!config.wakeword.enabled) return this._settle(false, 'wake word disabled by config');
+      if (!config.wakeword.enabled) {
+        // The normal state: voice/wakegate.js is the wake word now. Not a
+        // warning — see the note on config.wakeword.enabled.
+        log.debug('openWakeWord disabled by config');
+        return this._settle(false, null);
+      }
 
       const { python, sidecar } = config.wakeword;
       if (!fs.existsSync(python)) {
@@ -100,7 +105,7 @@ class WakeWord extends EventEmitter {
     this.available = ok;
     if (ok) log.info(message);
     else {
-      log.warn(message);
+      if (message) log.warn(message);
       if (this.proc) {
         try { this.proc.kill(); } catch (_) { /* ignore */ }
         this.proc = null;

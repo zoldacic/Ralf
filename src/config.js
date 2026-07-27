@@ -53,8 +53,60 @@ module.exports = {
       'Concentration, Grapple, Proficiency Bonus, Armor Class.',
   },
 
+  gate: {
+    // The wake word, by transcription rather than by acoustic model.
+    //
+    // Every finished speech segment goes through a small local Whisper, and a
+    // leading "Ralf" opens the question. This replaced openWakeWord: the trained
+    // models/ralf.onnx scored 0.99 on Piper TTS and 0.002 on this table's actual
+    // voices saying the same words, and no threshold rescues 0.002.
+    //
+    // The trade is latency — a transcript only exists once the utterance ends,
+    // so the trigger lands about a second later than an acoustic model's would,
+    // and the spoken ack lands with it. Worth it for something that hears real
+    // people. Set WAKE_GATE=false to fall back to /ralf only.
+    enabled: process.env.WAKE_GATE !== 'false',
+    // Screening for one name, so the smallest model is plenty and it stays far
+    // under realtime. Bump to base.en or small.en if it mishears the name.
+    model: process.env.GATE_WHISPER_MODEL || 'tiny.en',
+    // Greedy decoding: this transcript is only ever pattern-matched, never read
+    // aloud, so beam search buys nothing but latency.
+    beamSize: 1,
+    // Load-bearing, and fragile in both directions — measured over 26 recorded
+    // segments containing six real wake words:
+    //   no prompt      1/6 caught. Whisper has no reason to think "Ralf" is a
+    //                  word, so it reaches for Ron, Raul, "you're out".
+    //   this sentence  6/6 caught, zero false positives.
+    //   bare "Ralf"    6/6 caught but three false positives — over-primed, it
+    //                  hallucinates the name into near-silence ("Grandma Ralf").
+    //   "Hey Ralf. Yo Ralf."  a repetition loop: 55 copies of the phrase out of
+    //                  a 2.5 s clip, 14 s to decode. Never prime with the wake
+    //                  phrase itself, and never repeat it.
+    // One natural sentence mentioning the name once is the shape that works.
+    prompt: 'Ralf is the rules assistant at this Dungeons and Dragons table.',
+    // The name must land this early in the transcript to count, so saying
+    // "…ask Ralf about it" mid-sentence to another player doesn't fire.
+    leadingWords: 3,
+    // A wake word starts a short utterance; it is not buried in a monologue.
+    // Every recorded wake word ran under five seconds, while the long segments
+    // are the ones that cost the gate 13 s, so this cap is mostly about keeping
+    // the queue moving.
+    maxMs: Number(process.env.GATE_MAX_MS || 10000),
+    // Below this RMS there is no speech to find — same measurement as the
+    // session summariser (silence peaked at 944, quietest real speech was 957).
+    minRms: Number(process.env.GATE_MIN_RMS || 500),
+    // Discord hands every speaker their own stream, so a lively table can queue
+    // clips faster than the sidecar drains them. Past this many waiting, drop
+    // the segment: a stale trigger is worse than a missed one.
+    maxQueued: 3,
+  },
+
   wakeword: {
-    enabled: process.env.WAKEWORD_ENABLED !== 'false',
+    // Off by default now — the transcript gate above does the job, and running
+    // the sidecar as well costs a Python process and per-frame inference for
+    // nothing. Set WAKEWORD_ENABLED=true to run an acoustic model alongside it
+    // (worth doing again if models/ralf.onnx is ever retrained on real speech).
+    enabled: process.env.WAKEWORD_ENABLED === 'true',
     // openWakeWord runs as a local Python sidecar — no account, no cloud.
     // See src/voice/oww_sidecar.py and the wakeword-openwakeword-decision note.
     python: abs(process.env.WAKEWORD_PYTHON || '.venv/Scripts/python.exe'),

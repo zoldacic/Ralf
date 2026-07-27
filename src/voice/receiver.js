@@ -26,7 +26,7 @@ const BYTES_PER_SEC = 16000 * 2;
  *         'speech'    ({ userId, wav, durationMs, startedAt }) — every segment
  */
 class VoiceListener extends EventEmitter {
-  constructor(connection, { captureTest = false, record = false } = {}) {
+  constructor(connection, { captureTest = false, record = false, segment = false } = {}) {
     super();
     this.connection = connection;
     this.sessions = new Map(); // userId -> session
@@ -34,9 +34,11 @@ class VoiceListener extends EventEmitter {
     // Phase 2 debug: capture on any voice activity instead of waiting for the
     // wake word, and save the WAV rather than transcribing it.
     this.captureTest = captureTest;
-    // Session recording: emit every speech segment, wake word or not, so the
-    // whole table can be transcribed and summarized after the game.
-    this.record = record;
+    // Cut the stream into per-utterance segments and emit them as 'speech'.
+    // Two consumers want them: session recording (saved for the end-of-game
+    // summary) and the wake gate (transcribed to look for "Ralf"). Either one
+    // being on is enough reason to segment.
+    this.segment = record || segment;
 
     this.receiver = connection.receiver;
     this._onSpeakingStart = (userId) => this._subscribe(userId);
@@ -123,9 +125,9 @@ class VoiceListener extends EventEmitter {
   _onPcm(s, pcm) {
     if (this.stopped) return;
 
-    // Session recording runs on its own clock: everything said is kept, whether
-    // or not it followed a wake word, and regardless of capture state/cooldown.
-    this._record(s, pcm);
+    // Segmentation runs on its own clock: everything said is kept, whether or
+    // not it followed a wake word, and regardless of capture state/cooldown.
+    this._segment(s, pcm);
 
     if (s.state === CAPTURING) {
       s.captured.push(pcm);
@@ -165,12 +167,12 @@ class VoiceListener extends EventEmitter {
   }
 
   /**
-   * Accumulate a speech segment for the session recording. Discord only sends
-   * packets while someone is actually talking, so this is naturally gated: a
-   * segment ends on silence, or gets cut at maxSegmentMs to bound memory.
+   * Accumulate one speech segment. Discord only sends packets while someone is
+   * actually talking, so this is naturally gated: a segment ends on silence, or
+   * gets cut at maxSegmentMs to bound memory.
    */
-  _record(s, pcm) {
-    if (!this.record) return;
+  _segment(s, pcm) {
+    if (!this.segment) return;
 
     if (!s.rec) s.rec = { chunks: [], bytes: 0, startedAt: Date.now(), timer: null };
     const r = s.rec;
@@ -179,13 +181,13 @@ class VoiceListener extends EventEmitter {
 
     if (r.timer) clearTimeout(r.timer);
     if (r.bytes >= (config.session.maxSegmentMs / 1000) * BYTES_PER_SEC) {
-      this._flushRecording(s, 'max-length');
+      this._flushSegment(s, 'max-length');
       return;
     }
-    r.timer = setTimeout(() => this._flushRecording(s, 'silence'), config.capture.silenceMs);
+    r.timer = setTimeout(() => this._flushSegment(s, 'silence'), config.capture.silenceMs);
   }
 
-  _flushRecording(s, reason) {
+  _flushSegment(s, reason) {
     const r = s.rec;
     if (!r) return;
     if (r.timer) clearTimeout(r.timer);
@@ -265,7 +267,7 @@ class VoiceListener extends EventEmitter {
   _teardown(userId) {
     const s = this.sessions.get(userId);
     if (!s) return;
-    this._flushRecording(s, 'teardown'); // don't lose the tail of the session
+    this._flushSegment(s, 'teardown'); // don't lose the tail of the session
     if (s.silenceTimer) clearTimeout(s.silenceTimer);
     if (s.maxTimer) clearTimeout(s.maxTimer);
     if (s.stream) {

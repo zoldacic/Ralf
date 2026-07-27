@@ -18,6 +18,7 @@ const {
 const config = require('./config');
 const log = require('./util/logger');
 const wakeword = require('./voice/wakeword');
+const gate = require('./voice/wakegate');
 const { VoiceListener } = require('./voice/receiver');
 const { transcribe, stripWakeWord, _client: whisper } = require('./pipeline/transcribe');
 const { ask } = require('./pipeline/ask');
@@ -133,25 +134,61 @@ async function joinChannel(interaction) {
   const listener = new VoiceListener(connection, {
     captureTest: config.capture.testMode,
     record: Boolean(recordDir),
+    segment: gate.available,
   });
   const textChannel = interaction.channel;
 
-  // Every speech segment goes to disk, wake word or not. Deliberately just a
-  // file write — transcription happens later via /ralf-summary.
-  if (recordDir) {
+  // Both consumers of a finished speech segment. Recording is a plain file
+  // write; the gate transcribes it looking for the wake word. Neither may throw
+  // into the receiver, and neither may wait on the other.
+  const gateCooldown = new Map(); // userId -> timestamp
+  if (recordDir || gate.available) {
     listener.on('speech', ({ userId, wav, durationMs, startedAt }) => {
-      try {
-        const member = channel.guild.members.cache.get(userId);
-        saveSegment(recordDir, {
-          userId,
-          speaker: member?.displayName || member?.user?.username || userId,
-          wav,
-          durationMs,
-          startedAt,
-        });
-      } catch (err) {
-        log.error(`Failed to save segment: ${err.message}`);
+      // Transcription happens later via /ralf-summary — this is just a write.
+      if (recordDir) {
+        try {
+          const member = channel.guild.members.cache.get(userId);
+          saveSegment(recordDir, {
+            userId,
+            speaker: member?.displayName || member?.user?.username || userId,
+            wav,
+            durationMs,
+            startedAt,
+          });
+        } catch (err) {
+          log.error(`Failed to save segment: ${err.message}`);
+        }
       }
+
+      if (!gate.available || config.capture.testMode) return;
+      if (Date.now() < (gateCooldown.get(userId) || 0)) return;
+
+      gate
+        .check(wav, durationMs)
+        .then(async ({ hit }) => {
+          if (!hit) return;
+          gateCooldown.set(userId, Date.now() + config.wakeword.cooldownMs);
+          log.info(`Wake word heard from ${userId} (${durationMs}ms)`);
+
+          // The user was heard. This plays while the real transcription and
+          // Claude run, so the channel isn't silent for ~13 s.
+          playAck(player);
+
+          // Re-transcribe with the live model: the gate's tiny one is picked for
+          // speed and mangles anything longer than a name.
+          const question = stripWakeWord(await transcribe(wav));
+          if (!question) {
+            log.debug('Nothing but the wake word in that segment — ignoring');
+            return;
+          }
+          await handleQuestion({
+            guildId: interaction.guildId,
+            question,
+            source: 'wakegate',
+            userId,
+          });
+        })
+        .catch((err) => log.error(`Wake gate pipeline failed: ${err.message}`));
     });
   }
   listener.on('utterance', async ({ userId, wav, durationMs }) => {
@@ -227,7 +264,7 @@ async function joinChannel(interaction) {
 
   const mode = config.capture.testMode
     ? 'Capture-test mode: just talk and I will save a WAV of each utterance to tmp/.'
-    : wakeword.available
+    : gate.available || wakeword.available
       ? 'Say "Ralf" followed by your question, or use /ralf.'
       : 'Wake word is not active — use /ralf to ask questions.';
   // Say so out loud: everyone in the channel is being recorded.
@@ -386,23 +423,29 @@ client.on('error', (err) => log.error(`Discord client error: ${err.message}`));
 
 client.once('clientReady', async (c) => {
   log.info(`Logged in as ${c.user.tag}`);
-  await wakeword.init();
-  if (!wakeword.available) {
+  // Two independent ways to hear the wake word: the transcript gate (default)
+  // and the openWakeWord sidecar (off unless WAKEWORD_ENABLED=true). Either is
+  // enough; neither is required.
+  await Promise.all([gate.init(), wakeword.init()]);
+
+  if (!gate.available && !wakeword.available) {
     log.warn('Running without wake word — /ralf is the only trigger.');
-  } else {
-    whisper.warm(); // pre-load the STT model so the first spoken question isn't slow
-    // Pre-synthesize the instant-ack clip once, so the wake-word path can play
-    // it with zero Piper latency. Degrades to no ack if it fails.
-    prepareAck(config.ack.phrase)
-      .then((p) => log.info(p ? `Ack ready ("${config.ack.phrase}")` : 'Ack disabled'))
-      .catch((err) => log.warn(`Ack pre-synth failed, continuing without it: ${err.message}`));
+    return;
   }
+
+  whisper.warm(); // pre-load the STT model so the first spoken question isn't slow
+  // Pre-synthesize the instant-ack clip once, so the wake-word path can play
+  // it with zero Piper latency. Degrades to no ack if it fails.
+  prepareAck(config.ack.phrase)
+    .then((p) => log.info(p ? `Ack ready ("${config.ack.phrase}")` : 'Ack disabled'))
+    .catch((err) => log.warn(`Ack pre-synth failed, continuing without it: ${err.message}`));
 });
 
 function shutdown() {
   log.info('Shutting down...');
   for (const guildId of [...sessions.keys()]) leaveChannel(guildId);
   wakeword.releaseAll();
+  gate.shutdown();
   whisper.shutdown();
   client.destroy();
   process.exit(0);

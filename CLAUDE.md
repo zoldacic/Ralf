@@ -10,26 +10,31 @@ by voice, in English. Runs on Windows at `C:\Code\Ralf`.
 Two trigger paths, both funnelling into the same `handleQuestion()` in
 `src/index.js` so they can't drift apart:
 
-1. Spoken wake word "Ralf" → local Porcupine detection → capture → OpenAI STT → Claude → Piper TTS
+1. Spoken wake word "Ralf" → segment → tiny Whisper gate → Whisper STT → Claude → Piper TTS
 2. `/ralf <question>` slash command → Claude → Piper TTS (skips STT entirely)
 
-**Hosted:** speech-to-text (OpenAI), the LLM (Anthropic).
-**Local:** the bot process, wake word detection (Porcupine), text-to-speech (Piper).
+**Hosted:** the LLM (Anthropic). Nothing else.
+**Local:** the bot process, wake word, speech-to-text (faster-whisper), text-to-speech (Piper).
 
 ## Critical status
 
-**This scaffold has never been executed.** No package has been installed, nothing
-has been run against it. Only pure logic has been unit-tested: the resampler,
-WAV header construction, and the phonetic respell matcher. Everything touching
-Discord, Porcupine, OpenAI, Anthropic, or Piper is unverified.
+Running software, not a scaffold — everything through Phase 6 has been exercised
+against real Discord audio. The build-order table below is kept for the test each
+phase had to pass, not as a to-do list.
 
-Expect first-boot fixes, most likely in:
+Two subsystems drifted from the original plan and the sections below are written
+against the current code, not the plan:
 
-- Opus decoding (`@discordjs/opus` native build on Windows)
-- Piper's exact CLI flags and working-directory behaviour
-- `@discordjs/voice` receiver lifecycle under `EndBehaviorType.Manual`
-
-Treat the code as a well-formed starting point, not as working software.
+- **Wake word is transcription, not acoustics.** openWakeWord replaced Porcupine
+  (no account), and then a *trained* `models/ralf.onnx` turned out to score 0.99
+  on Piper's synthetic speech and 0.002 on this table's real voices saying the
+  same words. So `src/voice/wakegate.js` now runs every finished speech segment
+  through a `tiny.en` Whisper and fires on a leading "Ralf". The openWakeWord
+  path still exists behind `WAKEWORD_ENABLED=true`, for if the model is ever
+  retrained on real speech.
+- **STT is local.** faster-whisper via `src/pipeline/whisper_sidecar.py`, not
+  OpenAI. Two sidecars run: `medium.en` for questions, `tiny.en` for the gate,
+  plus a third multilingual one on demand for Swedish session summaries.
 
 ## Build order
 
@@ -47,20 +52,18 @@ later phases are hard to debug if an earlier one is subtly broken.
 | 7 | Hardening | pm2/NSSM, error paths, cooldowns |
 | 8 | Later | Retrieval over the 2024 SRD; optional VPS deploy |
 
-**Phase 1 needs neither Picovoice nor Piper.** Get `/ralf` working end to end
-before touching audio — it isolates every later failure to one subsystem.
-
 ## What Claude Code cannot do here
 
 These need a browser, an account, or a human decision. Ask the user; don't try
 to work around them:
 
 - Creating the Discord application and copying the bot token
-- Obtaining Anthropic / OpenAI / Picovoice API keys
-- Training the "Ralf" keyword in the Picovoice Console and downloading the
-  `.ppn` (must be the **Windows** build; English is the default model)
+- Obtaining the Anthropic API key
 - Downloading the Piper Windows binary and an English voice model
 - Choosing which Piper voice sounds right
+- Speaking into a microphone. Recall of the wake word can only be measured live;
+  every offline check needs a clip of a real person saying it, and the only
+  source of those is `recordings/`.
 
 ## Conventions
 
@@ -84,15 +87,22 @@ to work around them:
 ## Gotchas
 
 - `selfDeaf: false` is required in `joinVoiceChannel` or no audio is received.
-- Porcupine instances are stateful and single-stream — one per speaker, released
-  on disconnect. `src/voice/wakeword.js` pools them; don't share one instance.
 - Spawn Piper with `cwd` set to its own directory. It resolves espeak-ng data
   relative to the working directory and fails confusingly otherwise.
-- Discord sends 48 kHz stereo; Porcupine and Whisper both want 16 kHz mono.
-  `src/voice/resample.js` handles this. Frame length comes from
-  `porcupine.frameLength` — don't hardcode 512.
-- `config.wakeword.modelPath` is null for English — Porcupine uses its built-in
-  model and the constructor takes three arguments, not four.
+- Discord sends 48 kHz stereo; Whisper wants 16 kHz mono. `src/voice/resample.js`
+  handles this, and the receiver emits segments already in that format — which is
+  why `recordings/*.wav` can be replayed through the gate offline byte for byte.
+- **The gate's `initial_prompt` is load-bearing and fragile in both directions.**
+  Without one, `tiny.en` caught 1 of 6 real wake words — it has no reason to
+  think "Ralf" is a word and reaches for Ron, Raul, "you're out". With one
+  natural sentence naming Ralf once, 6 of 6 and no false positives. But priming
+  with the bare word hallucinates it into silence, and priming with the wake
+  phrase repeated ("Hey Ralf. Yo Ralf.") sends it into a repetition loop — 55
+  copies out of a 2.5 s clip, 14 s to decode. Re-measure before changing it;
+  `recordings/` has the clips.
+- `stripWakeWord()` in `pipeline/transcribe.js` and `NAME` in `voice/wakegate.js`
+  must stay in step: anything that can open the gate has to be strippable, or the
+  wake word ends up inside the question sent to Claude.
 - If `@discordjs/opus` won't build, swap to `opusscript`. `prism-media` picks up
   whichever is installed.
 
