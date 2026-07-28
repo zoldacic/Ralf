@@ -99,10 +99,12 @@ Tune `WAKE_SENSITIVITY` in `.env` (0–1): higher catches more, false-triggers m
    (you should end up with `bin\piper\piper.exe`)
 2. Download an English voice — both the `.onnx` and `.onnx.json` — into
    `models\`. Samples: https://rhasspy.github.io/piper-samples/
-   - `en_GB-alba-medium` (default)
+
+   Ralf is voiced male, so pick a masculine voice:
+   - `en_GB-alan-medium` (default) — Southern English, dry
    - `en_GB-northern_english_male-medium`
-   - `en_US-lessac-medium` — the most neutral
    - `en_US-ryan-high` — best quality, slower
+   - `en_US-joe-medium`, `en_US-lessac-medium` — American
 3. Set `PIPER_VOICE` in `.env` if you pick something else
 
 Audition voices on real D&D sentences before committing:

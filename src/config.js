@@ -222,7 +222,11 @@ module.exports = {
 
   piper: {
     bin: abs(process.env.PIPER_BIN || 'bin/piper/piper.exe'),
-    voice: abs(process.env.PIPER_VOICE || 'models/en_GB-alba-medium.onnx'),
+    // Ralf is voiced male, and alan was chosen by ear. The original default,
+    // alba, is a female Scottish voice. Other masculine voices are downloaded
+    // alongside this one — audition with src/util/tts-test.js, switch with
+    // PIPER_VOICE.
+    voice: abs(process.env.PIPER_VOICE || 'models/en_GB-alan-medium.onnx'),
   },
 
   character: {
