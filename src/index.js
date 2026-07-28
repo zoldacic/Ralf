@@ -24,6 +24,8 @@ const { transcribe, stripWakeWord, _client: whisper } = require('./pipeline/tran
 const { ask } = require('./pipeline/ask');
 const { speak, prepareAck, playAck } = require('./pipeline/speak');
 const character = require('./pipeline/character');
+const { illustrate } = require('./pipeline/illustrate');
+const { buildPdf } = require('./pipeline/pdf');
 const {
   startSession,
   latestSession,
@@ -358,9 +360,62 @@ async function summarizeCommand(interaction) {
     for (const part of chunkMessage(`**Session recap** (${spoken} clips)\n\n${summary}`)) {
       await channel?.send(part).catch(() => {});
     }
+
+    // The recap is already posted, so everything below is a bonus. Illustrating
+    // and typesetting must never turn a delivered summary into an error.
+    await postIllustratedPdf(channel, dir, summary, segments.length);
   } catch (err) {
     log.error(`Summary failed: ${err.message}`);
     await channel?.send(`Could not build the summary: ${err.message}`).catch(() => {});
+  }
+}
+
+/**
+ * Draw the recap and post it as a PDF.
+ *
+ * Deliberately swallows its own failures: Stable Diffusion is the heaviest and
+ * newest part of the bot, and a card that runs out of memory should cost the
+ * pictures, not the recap that is already in the channel.
+ */
+async function postIllustratedPdf(channel, dir, summary, clips) {
+  if (!config.illustrate.enabled) return;
+
+  let images = [];
+  try {
+    const note = await channel
+      ?.send(`Drawing ${config.illustrate.count} scenes from the session…`)
+      .catch(() => null);
+    images = await illustrate(summary, dir);
+    await note?.delete().catch(() => {});
+  } catch (err) {
+    log.warn(`Illustration failed, falling back to a text-only PDF: ${err.message}`);
+  }
+
+  try {
+    const when = path.basename(dir).replace(/T(\d\d)-(\d\d)-(\d\d)$/, ' $1:$2');
+    const file = path.join(dir, 'recap.pdf');
+    await buildPdf({
+      summary,
+      images,
+      file,
+      title: 'Session recap',
+      subtitle: `${when} · ${clips} clips` + (images.length ? ` · ${images.length} scenes` : ''),
+    });
+
+    // Discord rejects oversized attachments outright, so check before sending
+    // and fall back to telling them where it is.
+    const bytes = fs.statSync(file).size;
+    if (bytes > config.session.maxUploadBytes) {
+      const mb = (bytes / 1024 / 1024).toFixed(1);
+      return void (await channel
+        ?.send(`The recap PDF came out at ${mb} MB, too big to attach. It's at \`${file}\`.`)
+        .catch(() => {}));
+    }
+    await channel?.send({ files: [file] }).catch((err) => {
+      log.warn(`Could not attach the recap PDF: ${err.message}`);
+    });
+  } catch (err) {
+    log.error(`Building the recap PDF failed: ${err.message}`);
   }
 }
 

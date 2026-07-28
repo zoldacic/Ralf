@@ -1,6 +1,7 @@
 .env
 node_modules/
 .venv/
+.venv-sd/
 __pycache__/
 *.pyc
 tmp/

@@ -167,11 +167,51 @@ module.exports = {
     // of resolution for a recap; tightening it costs speed, widening it blurs
     // the chronology.
     batchSpanMs: Number(process.env.SUMMARY_BATCH_SPAN_MS || 300000),
+    // Discord rejects attachments over its per-server limit outright; 10 MB is
+    // the floor (an unboosted server). Raise it if this guild is boosted.
+    maxUploadBytes: Number(process.env.MAX_UPLOAD_BYTES || 10 * 1024 * 1024),
     // Rules terms stay English at Swedish tables, so bias toward both.
     sttPrompt:
       'Ett samtal på svenska under en Dungeons and Dragons-session. ' +
       'Regeltermer sägs ofta på engelska: advantage, disadvantage, saving throw, ' +
       'initiative, opportunity attack, weapon mastery, concentration, armor class.',
+  },
+
+  illustrate: {
+    // Draw the session recap and ship it as a PDF when /ralf-summary finishes.
+    // Local Stable Diffusion, so this stays account-free like the rest of the
+    // stack — the cost is a one-time multi-gigabyte model download and a GPU.
+    // Set ILLUSTRATE=false for a text-only recap.
+    enabled: process.env.ILLUSTRATE !== 'false',
+    // Its own virtualenv: torch is a ~3 GB tree and has no business sharing an
+    // environment with the wake word and Whisper, which have to keep working.
+    python: abs(process.env.SD_PYTHON || '.venv-sd/Scripts/python.exe'),
+    sidecar: abs('src/pipeline/image_sidecar.py'),
+    scenePrompt: abs('src/data/scene-prompt.txt'),
+    // sd-turbo is distilled for one to four steps and 512x512, which is what
+    // fits a 4 GB card. SDXL does not fit; plain SD 1.5 needs ~25 steps for the
+    // same quality and takes an order of magnitude longer.
+    model: process.env.SD_MODEL || 'stabilityai/sd-turbo',
+    // Keep the weights in the project's gitignored models/ rather than spraying
+    // them through the user profile.
+    hfHome: abs('models/hf'),
+    count: Number(process.env.SD_IMAGES || 5),
+    steps: Number(process.env.SD_STEPS || 4),
+    width: 512,
+    height: 512,
+    // sd-turbo is trained for guidance 0. Raising it burns the image rather
+    // than sharpening it.
+    guidance: 0,
+    // Inert at guidance 0 — a negative prompt only acts through classifier-free
+    // guidance, which guidance 0 switches off. Left here for anyone who swaps in
+    // a non-distilled model. The watermark strip this would otherwise target is
+    // cropped in the sidecar instead.
+    negative: 'text, letters, watermark, signature, blurry, deformed hands, extra limbs',
+    // Fixed so a recap redrawn from the same scenes looks the same. Set
+    // SD_SEED='' for a different roll every time.
+    seed: process.env.SD_SEED === '' ? null : Number(process.env.SD_SEED || 1337),
+    // Scene planning is a small structured job, but thinking shares the budget.
+    maxTokens: 2000,
   },
 
   audio: {

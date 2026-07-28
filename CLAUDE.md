@@ -13,8 +13,13 @@ Two trigger paths, both funnelling into the same `handleQuestion()` in
 1. Spoken wake word "Ralf" → segment → tiny Whisper gate → Whisper STT → Claude → Piper TTS
 2. `/ralf <question>` slash command → Claude → Piper TTS (skips STT entirely)
 
+Plus one offline path: `/ralf-summary` transcribes the whole recorded session,
+has Claude write a recap, illustrates it with local Stable Diffusion, and posts
+the result as a PDF.
+
 **Hosted:** the LLM (Anthropic). Nothing else.
-**Local:** the bot process, wake word, speech-to-text (faster-whisper), text-to-speech (Piper).
+**Local:** the bot process, wake word, speech-to-text (faster-whisper),
+text-to-speech (Piper), recap illustrations (Stable Diffusion).
 
 ## Critical status
 
@@ -105,6 +110,21 @@ to work around them:
   wake word ends up inside the question sent to Claude.
 - If `@discordjs/opus` won't build, swap to `opusscript`. `prism-media` picks up
   whichever is installed.
+- **Stable Diffusion lives in its own virtualenv, `.venv-sd`.** torch is a ~3 GB
+  tree and must not share an environment with the wake word and Whisper, which
+  have to keep working. Weights go to `models/hf` (gitignored) via `HF_HOME`.
+- **Install torch from the cu126 index, not cu128 or later.** This box has a
+  GTX 1050 Ti, which is Pascal (sm_61), and CUDA 13 dropped Pascal. Check
+  `torch.cuda.get_arch_list()` contains `sm_61` after any torch upgrade.
+- **`guidance_scale` must stay 0 for sd-turbo**, which is distilled for it —
+  raising it burns the image rather than sharpening it. A consequence that is
+  easy to miss: a **negative prompt does nothing at guidance 0**, because it
+  only acts through classifier-free guidance. The watermark strip SD 2.x paints
+  along the bottom edge is cropped off in the sidecar for exactly that reason.
+- The 4 GB card is the ceiling on image work: sd-turbo at 512x512 peaks at
+  3.3 GB and renders in ~5.5 s cold. Push past 4 GB and the driver falls back to
+  system memory, which takes a render to ~30 s without ever erroring. Slicing
+  does not save you — the weights fill the card, not the activations.
 
 ## Useful commands
 
