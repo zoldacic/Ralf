@@ -125,6 +125,22 @@ async function joinChannel(interaction) {
   });
   connection.subscribe(player);
 
+  // An EventEmitter that emits 'error' with nobody listening makes Node throw,
+  // and that kills the whole bot. It already cost us the receive streams in
+  // receiver.js; the connection and the player are the same trap. Seen live: a
+  // voice server went away mid-session and the DNS lookup for it failed, which
+  // surfaced as an unhandled 'error' on the connection and took Ralf down. The
+  // Disconnected handler further below is what recovers from that, and it only
+  // gets the chance if the process is still alive to run it.
+  //
+  // Attached here, at creation, rather than beside the other connection
+  // handlers at the end of this function: the receiver is wired up in between,
+  // and a listener that exists only after the danger has passed is no listener.
+  connection.on('error', (err) => log.error(`Voice connection error: ${err.message}`));
+  // speak() attaches its own per-clip handler and rejects through it, but the
+  // ack plays fire-and-forget, so the player needs one that always exists.
+  player.on('error', (err) => log.error(`Audio player error: ${err.message}`));
+
   // Roll tonight's character before anything else needs it, so the intro line
   // is already being written while the receiver is wired up.
   const rolled = character.enabled() ? character.rollCharacter() : null;
