@@ -1,0 +1,21 @@
+# Recap illustrations (Stable Diffusion) — the separate .venv-sd environment.
+#
+#   py -3.14 -m venv .venv-sd
+#   .venv-sd\Scripts\python.exe -m pip install -r requirements-sd.txt
+#
+# Deliberately its own virtualenv: torch is a ~3 GB tree and has no business
+# sharing an environment with the wake word and Whisper, which have to keep
+# working. Skip this file entirely and set ILLUSTRATE=false for text-only recaps.
+#
+# The index URL is not optional. This box has a GTX 1050 Ti — Pascal, sm_61 —
+# and CUDA 13 dropped Pascal, so cu128 and later builds cannot run here. After
+# any torch change, check that this prints True:
+#
+#   .venv-sd\Scripts\python.exe -c "import torch; print('sm_61' in torch.cuda.get_arch_list())"
+
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+torch==2.13.0+cu126
+diffusers==0.39.0
+transformers==5.14.1
+accelerate==1.14.0

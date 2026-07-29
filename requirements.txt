@@ -1,0 +1,17 @@
+# Speech-to-text and wake word — the .venv environment.
+#
+# Pinned to what this box is actually running (Python 3.14.6). These are the
+# direct imports of src/pipeline/whisper_sidecar.py and src/voice/oww_sidecar.py;
+# pip resolves the rest (ctranslate2, tokenizers, onnxruntime, ...).
+#
+#   py -3.14 -m venv .venv
+#   .venv\Scripts\python.exe -m pip install -r requirements.txt
+#
+# Keep this environment free of torch — see requirements-sd.txt.
+
+faster-whisper==1.2.1
+numpy==2.5.1
+
+# Only needed for the acoustic wake word (WAKEWORD_ENABLED=true). The live path
+# is the transcript gate, which needs nothing beyond faster-whisper above.
+openwakeword==0.6.0
